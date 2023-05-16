@@ -24,8 +24,8 @@ class Motor_Control_Tmotor
     float uint_to_float(int x_int, float x_min, float x_max, uint8_t nbits);
     void unpack_reply(CAN_message_t msgR);
     void initial_CAN();
-    float pos;
-    float spe;
+    float pos; // rad
+    float spe; // rad/s
     float torque;
     float temp;
     FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> Can3;

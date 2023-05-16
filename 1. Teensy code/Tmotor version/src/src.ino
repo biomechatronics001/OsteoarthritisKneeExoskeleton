@@ -13,11 +13,11 @@ int stopFlag = 0;
 int saveDataFlag = 1;
 int numOfInitialSteps = 1;
 int enableExtensionStop = 0;
-uint32_t Motor_ID1 = 1; // Motor Can Bus ID, left leg, loadcell: port 1, positive current = extension // updated on 2023-02-11 2
-uint32_t Motor_ID2 = 2; // Motor Can Bus ID, right leg, loadcell: port 2, positive current = flexion // updated on 2023-02-11 3
+uint32_t Motor_ID1 = 1; // Motor Can Bus ID, left leg, positive current = extension = encoder value increase // updated on 2023-05-16 2
+uint32_t Motor_ID2 = 2; // Motor Can Bus ID, right leg, positive current = flexion = encoder value decrease // updated on 2023-05-16 3
 int CAN_ID = 3;         // CAN port from Teensy
 double Gear_ratio = 9;  //The actuator gear ratio, will enfluence actuator angle and angular velocity
-double torque_constant_before_gear = 0.091; // before gear at 24 V. Ref: https://store.tmotor.com/goods.php?id=982
+double torque_constant_before_gear = 0.105 * 0.707; // before gear at 24 V. Ref: https://store.tmotor.com/goods.php?id=982
 
 // *** for RingBuf *** //
 #include "SdFat.h"
@@ -57,18 +57,24 @@ FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> Can3;
 CAN_message_t msgR;
 /*Canbus Setup*/
 
-// Tmotor related code //
+// Begin Tmotor related code //
 float p_des = 0;
 float v_des = 0;
 float kp = 0;
 float kd = 0;
 float t_ff_L = 0;
 float t_ff_R = 0;
+// End Tmotor related code //
 
+// #define PI = 3.1415926
 double LGPPrevious = 0;
 double LGPCurrent = 0;
 double dataCounter = 0;
 int initialStepCounter = 0;
+double neturalKneeAngle = 0.0; // degree, flexion is positive
+double neturalKneeAngleSlack = 5.0; // degree; knee considered to be fully extend if knee encoder value <= neturalKneeAngle + neturalKneeAngleSlack
+int stopAssistanceInSwingAtNeturalKnee = 0; //set to be always on
+int isEnabled = 0;
 
 double weight = 52; // [kg] weight of the subject
 uint32_t ID_offset = 0x140;
@@ -172,7 +178,7 @@ void setup()
   reset_motor_angle();
   CurrentControlSetup();
   pinMode(A8, INPUT); // init trigger pin
-  
+
   // cic.calculateSigmoid();
   cic.calculateSigmoid(cic.kdMax, cic.kdMin, cic.kd_arr_Junxi);
   cic.calculateSigmoid(cic.bdMax, cic.bdMin, cic.bd_arr_Junxi);
@@ -195,8 +201,8 @@ void loop()
   while (stopFlag)
   {
   };
-  
-  // imu.READ();  
+
+  // imu.READ();
   CurrentControl();
 }
 
@@ -278,10 +284,10 @@ void CurrentControl()
     imu.READ();
     if (Stop_button) //stop
     {
-      p_des=0;//dont change this
-      v_des=0;//dont change this
-      kp=0;//dont change this
-      kd=0;//dont change this
+      p_des = 0; //dont change this
+      v_des = 0; //dont change this
+      kp = 0; //dont change this
+      kd = 0; //dont change this
       torque_command_L = 0; // torque command
       torque_command_R = 0; // torque command
     }
@@ -298,26 +304,26 @@ void CurrentControl()
     m1.send_cmd(p_des, v_des, kp, kd, torque_command_L);//torque_command_L);
     // delay(1);
 
-    for(int  qwe=0; qwe<100;qwe++)
+    for (int  qwe = 0; qwe < 100; qwe++)
     {
-      
+
     }
     receive_CAN_data();
     // delay(1);
-        for(int  qwe=0; qwe<100;qwe++)
+    for (int  qwe = 0; qwe < 100; qwe++)
     {
-      
+
     }
     m2.send_cmd(p_des, v_des, kp, kd, torque_command_R);//torque_command_R);
     // delay(1);
-        for(int  qwe=0; qwe<100;qwe++)
+    for (int  qwe = 0; qwe < 100; qwe++)
     {
-      
+
     }
     receive_CAN_data();
-        for(int  qwe=0; qwe<100;qwe++)
+    for (int  qwe = 0; qwe < 100; qwe++)
     {
-      
+
     }
     // delay(1);
 
@@ -333,7 +339,7 @@ void CurrentControl()
     {
       triggerOn = 1;
     }
-    
+
     if (isLogging)
     {
       logData3();
@@ -349,9 +355,9 @@ void CurrentControl()
     receive_ble_Data();
     send_ble_Data(); // send the BLE data
     previous_time_ble = current_time;
-    
+
     plot_cic_data();
-    
+
   }
   if (Serial.available())
   {
@@ -377,12 +383,24 @@ void Compute_Tor_Commands()
   else if (assist_mode == 4) //sine wave
   {
     mode = "Sine Wave";
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
     torque_command_L = 2 * sin(2 * PI * current_time / 1000000);
     torque_command_R = -2 * sin(2 * PI * current_time / 1000000);
+    Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
+    Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
+  }
+    else if (assist_mode == 6) //sine wave
+  {
+    mode = "Constant";
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+    torque_command_L = 0;
+    torque_command_R = 0;
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
   }
@@ -400,25 +418,47 @@ void Compute_Tor_Commands()
     // Serial.println("Entered mode 12");
     cic.computeGaitPhase(imu.LTAVx - imu.RTAVx, -m1.pos, m2.pos, -m1.spe, m2.spe);
     cic.computeSineAssistanceTorque();
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
     torque_command_L = cic.sineAssistanceTotalTorqueLeft;
-    torque_command_R = -cic.sineAssistanceTotalTorqueRight; 
+    torque_command_R = -cic.sineAssistanceTotalTorqueRight;
+    if (stopAssistanceInSwingAtNeturalKnee == 1)
+    {
+      Serial.println("neutral on");
+      if (cic.GP_IMU_L >= 60 && m1.pos / PI * 180 >= neturalKneeAngle - neturalKneeAngleSlack) // TODO: check m1.pos sign!
+      {
+        torque_command_L = 0;
+        isEnabled = 1;
+      }
+      else
+      {
+        isEnabled = 0;
+      }
+      if (cic.GP_IMU_R >= 60 && m2.pos / PI * 180 <= neturalKneeAngle + neturalKneeAngleSlack)
+      {
+        torque_command_R = 0;
+        // isEnabled = 1;
+      }
+    }
+    else
+    {
+      isEnabled = 0;
+    }
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
   }
 
- else if (assist_mode == 51)
+  else if (assist_mode == 51)
   {
     mode = "Squatting (gravity)";
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
-    torque_command_L = -0.3 * 48 * sin((imu.LTx+imu.RTx) * 1.5 /180 * 3.14 / 2 / 2);
-    torque_command_R = 0.3 * 48 * sin((imu.LTx+imu.RTx) * 1.5 /180 * 3.14 / 2 / 2);
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+    torque_command_L = -0.3 * 48 * sin((imu.LTx + imu.RTx) * 1.5 / 180 * 3.14 / 2 / 2);
+    torque_command_R = 0.3 * 48 * sin((imu.LTx + imu.RTx) * 1.5 / 180 * 3.14 / 2 / 2);
     Serial.print(imu.LTx);
     Serial.print(" ");
     Serial.print(imu.RTx);
@@ -434,14 +474,14 @@ void Compute_Tor_Commands()
   else if (assist_mode == 52)
   {
     mode = "Squatting (biological)";
-    
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
-    
-    squat_bio_angle = int(-(imu.LTx+imu.RTx) * 1.5 / 2);
-    
+
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+
+    squat_bio_angle = int(-(imu.LTx + imu.RTx) * 1.5 / 2);
+
     if (squat_bio_angle < 0)
     {
       squat_bio_angle = 0;
@@ -451,9 +491,9 @@ void Compute_Tor_Commands()
       squat_bio_angle = 139;
     }
 
-    torque_command_L = -0.4 * 0.3 * squat_bio[squat_bio_angle]*(-1);
-    torque_command_R = 0.4 * 0.3 * squat_bio[squat_bio_angle]*(-1);
-    
+    torque_command_L = -0.4 * 0.3 * squat_bio[squat_bio_angle] * (-1);
+    torque_command_R = 0.4 * 0.3 * squat_bio[squat_bio_angle] * (-1);
+
     Serial.print(imu.LTx);
     Serial.print(" ");
     Serial.print(imu.RTx);
@@ -461,25 +501,25 @@ void Compute_Tor_Commands()
     Serial.print(torque_command_L);
     Serial.print(" ");
     Serial.println(torque_command_R);
-    
+
     torque_command_L = 0;
     torque_command_R = 0;
-    
+
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
   }
   else if (assist_mode == 53)
   {
     mode = "Squatting (quasi-static Yu RAL)";
-    
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
-    
+
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+
     torque_command_L = -0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
     torque_command_R = 0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
-    
+
     Serial.print(imu.LTx);
     Serial.print(" ");
     Serial.print(imu.RTx);
@@ -487,29 +527,29 @@ void Compute_Tor_Commands()
     Serial.print(torque_command_L);
     Serial.print(" ");
     Serial.println(torque_command_R);
-    
+
     torque_command_L = 0;
     torque_command_R = 0;
-    
+
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
   }
-    else if (assist_mode == 54)
+  else if (assist_mode == 54)
   {
     mode = "Squatting (quasi-static Yu RAL)*0.5";
-    
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
-    
+
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+
     torque_command_L = -0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
     torque_command_R = 0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
-     
+
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
 
-      if ((((imu.RTAVx + imu.LTAVx) / 2) < -20) && (((imu.RTx + imu.LTx) / 2) > -105))
+    if ((((imu.RTAVx + imu.LTAVx) / 2) < -20) && (((imu.RTx + imu.LTx) / 2) > -105))
     {
       torque_command_L = 0.5 * torque_command_L;
       torque_command_R = 0.5 * torque_command_R;
@@ -517,14 +557,14 @@ void Compute_Tor_Commands()
     else
     {
     }
-//    Serial.print(imu.LTx);
-//    Serial.print(" ");
-//    Serial.print(imu.RTx);
-//    Serial.print(" ");
-//    Serial.print(torque_command_L);
-//    Serial.print(" ");
+    //    Serial.print(imu.LTx);
+    //    Serial.print(" ");
+    //    Serial.print(imu.RTx);
+    //    Serial.print(" ");
+    //    Serial.print(torque_command_L);
+    //    Serial.print(" ");
     Serial.println(torque_command_R);
-     
+
     if (torque_command_L < 0)
     {
       torque_command_L = 0;
@@ -534,26 +574,26 @@ void Compute_Tor_Commands()
     {
       torque_command_R = 0;
     }
-    
+
     torque_command_L = 0;
     torque_command_R = 0;
-}    
-    else if (assist_mode == 55)
+  }
+  else if (assist_mode == 55)
   {
     mode = "Squatting (quasi-static Yu RAL)*0.5";
-    
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
-    
+
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
+
     torque_command_L = -0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
     torque_command_R = 0.4 * 0.25 * imu.Gain_E * imu.SquatTorque * (-1);
-     
+
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
 
-      if ((((imu.RTAVx + imu.LTAVx) / 2) < -20) && (((imu.RTx + imu.LTx) / 2) > -105))
+    if ((((imu.RTAVx + imu.LTAVx) / 2) < -20) && (((imu.RTx + imu.LTx) / 2) > -105))
     {
       torque_command_L = 0 * torque_command_L;
       torque_command_R = 0 * torque_command_R;
@@ -561,14 +601,14 @@ void Compute_Tor_Commands()
     else
     {
     }
-//    Serial.print(imu.LTx);
-//    Serial.print(" ");
-//    Serial.print(imu.RTx);
-//    Serial.print(" ");
-//    Serial.print(torque_command_L);
-//    Serial.print(" ");
+    //    Serial.print(imu.LTx);
+    //    Serial.print(" ");
+    //    Serial.print(imu.RTx);
+    //    Serial.print(" ");
+    //    Serial.print(torque_command_L);
+    //    Serial.print(" ");
     Serial.println(torque_command_R);
-    
+
     if (torque_command_L < 0)
     {
       torque_command_L = 0;
@@ -581,16 +621,16 @@ void Compute_Tor_Commands()
 
     torque_command_L = 0;
     torque_command_R = 0;
-    
+
   }
-  
+
   else if (assist_mode == 100)
   {
     mode = "Stop";
-    p_des=0;//dont change this
-    v_des=0;//dont change this
-    kp=0;//dont change this
-    kd=0;//dont change this
+    p_des = 0; //dont change this
+    v_des = 0; //dont change this
+    kp = 0; //dont change this
+    kd = 0; //dont change this
     torque_command_L = 0;
     torque_command_R = 0;
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
@@ -690,7 +730,7 @@ void receive_ble_Data()
             {
               imu.Gain_E = Gain_E;
             }
-            
+
             else if (assist_mode == 8)
             {
               imu.Gain_E = Gain_E;
@@ -710,7 +750,7 @@ void receive_ble_Data()
             {
               imu.Gain_F = Gain_F;
             }
-            
+
             else if (assist_mode == 8)
             {
               imu.beta = Gain_F;
@@ -731,7 +771,7 @@ void receive_ble_Data()
             {
               imu.delaypoint = delaypoint;
             }
-            
+
             else if (assist_mode == 8)
             {
               imu.angleRelativeThreshold = delaypoint; // initial angle is 80 degrees
@@ -760,6 +800,14 @@ void receive_ble_Data()
           else if (data_rs232_rx[3] == 7)
           {
             reset_motor_angle();
+            // int m = 0;
+            // float sum = 0;
+            // int SSize = 20;
+            // while (m < SSize) {
+            //   sum = (m1.pos + m2.pos) + sum;
+            //   m++;
+            // }
+            neturalKneeAngle = 0; //sum / (SSize * 2);
             Serial.println("The angle of motor has been reset");
             imu.INIT_MEAN();
             Serial.println("The angle of IMUs has been reset");
@@ -887,7 +935,7 @@ void receive_ble_Data()
             int sineAssistanceShift = int(data_rs232_rx[7]);
             int sineAssistanceDuration = int(data_rs232_rx[8]);
             double sineAssistanceSaturation = ((int16_t)(((uint16_t)data_rs232_rx[9]) | ((uint16_t)data_rs232_rx[10] << 8))) / 100.0;
-            cic.addSineAssistanceProfile(sineAssistanceTypeIdx,sineAssistanceMagnitude,sineAssistanceShift,sineAssistanceDuration,sineAssistanceSaturation);
+            cic.addSineAssistanceProfile(sineAssistanceTypeIdx, sineAssistanceMagnitude, sineAssistanceShift, sineAssistanceDuration, sineAssistanceSaturation);
             Serial.print("Added ");
             Serial.print(sineAssistanceTypeName);
             Serial.print(" assistance. Magnitude = ");
@@ -922,7 +970,7 @@ void receive_ble_Data()
             //   Serial.print(" ");
             // }
             // Serial.println(" ");
-            cic.removeSineAssistanceProfile(sineAssistanceTypeIdx,sineAssistanceProfileIdx);
+            cic.removeSineAssistanceProfile(sineAssistanceTypeIdx, sineAssistanceProfileIdx);
             Serial.print("Removed ");
             Serial.print(sineAssistanceTypeName);
             Serial.print(" assistance. ID = ");
@@ -952,7 +1000,7 @@ void receive_ble_Data()
             int sineAssistanceShift = int(data_rs232_rx[8]);
             int sineAssistanceDuration = int(data_rs232_rx[9]);
             double sineAssistanceSaturation = ((int16_t)(((uint16_t)data_rs232_rx[10]) | ((uint16_t)data_rs232_rx[11] << 8))) / 100.0;
-            cic.editSineAssistanceProfile(sineAssistanceTypeIdx,sineAssistanceProfileIdx,sineAssistanceMagnitude,sineAssistanceShift,sineAssistanceDuration,sineAssistanceSaturation);
+            cic.editSineAssistanceProfile(sineAssistanceTypeIdx, sineAssistanceProfileIdx, sineAssistanceMagnitude, sineAssistanceShift, sineAssistanceDuration, sineAssistanceSaturation);
             Serial.print("Edit ");
             Serial.print(sineAssistanceTypeName);
             Serial.print(" assistance. ID = ");
@@ -966,6 +1014,11 @@ void receive_ble_Data()
             Serial.print(", saturation = ");
             Serial.println(sineAssistanceSaturation);
           }
+          else if (data_rs232_rx[3] == 28)
+          {
+            stopAssistanceInSwingAtNeturalKnee = int(data_rs232_rx[4]); //set to be always on
+            Serial.println(stopAssistanceInSwingAtNeturalKnee);
+          }
         }
       }
     }
@@ -977,16 +1030,16 @@ void send_ble_Data()
   LK_ble = imu.LKx * 100;
   RK_ble = imu.RKx * 100;
 
-  current_command_L_ble = -Cur_command_L * 100; // Gui flexion is negative
-  current_command_R_ble = Cur_command_R * 100;  // Gui flexion is negative
+  current_command_L_ble = -Cur_command_L * 100; //
+  current_command_R_ble = Cur_command_R * 100;  //
   // current_command_L_ble = -m1.iq_A * 100;
   // current_command_R_ble = m2.iq_A * 100;
 
-  torque_command_L_ble = torque_command_L * 100; // Gui flexion is negative
-  torque_L_ble = m1.torque * 100;  // motor torque constant = 0.232 Nm/A, gear ratio = 9;
+  torque_command_L_ble = torque_command_L * 100; //
+  torque_L_ble = m1.torque * 100;  //
 
-  torque_command_R_ble = -torque_command_R * 100; // Gui flexion is negative
-  torque_R_ble = -m2.torque * 100; 
+  torque_command_R_ble = -torque_command_R * 100; //
+  torque_R_ble = -m2.torque * 100;
 
   //  gait_percentage_L_ble = imu.gait_percentage_L * 100;
   gait_percentage_L_ble = 0;
@@ -1047,7 +1100,7 @@ void send_ble_Data()
   data_ble[27] = motor_speed_R_ble;
   data_ble[28] = motor_speed_R_ble >> 8;
   //
-  
+
   Serial5.write(data_ble, datalength_ble);
 }
 
@@ -1104,92 +1157,92 @@ void logData3()
   // Read ADC0 - about 17 usec on Teensy 4, Teensy 3.6 is faster.
   //  uint16_t adc = analogRead(0);
   // Print spareMicros into the RingBuf as test data.
-     rb.print(relTime);
-     rb.write(" ");
-     rb.print(imu.TKx);
-     rb.write(" ");
-     rb.print(imu.TKy);
-     rb.write(" ");
-     rb.print(imu.TKz);
-     rb.write(" ");
-     rb.print(imu.LTx);
-     rb.write(" ");
-     rb.print(imu.LTy);
-     rb.write(" ");
-     rb.print(imu.LTz);
-     rb.write(" ");
-     rb.print(imu.RTx);
-     rb.write(" ");
-     rb.print(imu.RTy);
-     rb.write(" ");
-     rb.print(imu.RTz);
-     rb.write(" ");
-     rb.print(imu.LSx);
-     rb.write(" ");
-     rb.print(imu.LSy);
-     rb.write(" ");
-     rb.print(imu.LSz);
-     rb.write(" ");
-     rb.print(imu.RSx);
-     rb.write(" ");
-     rb.print(imu.RSy);
-     rb.write(" ");
-     rb.print(imu.RSz);
-     rb.write(" ");
-     rb.print(imu.TKAVx);
-     rb.write(" ");
-     rb.print(imu.TKAVy);
-     rb.write(" ");
-     rb.print(imu.TKAVz);
-     rb.write(" ");
-     rb.print(imu.LTAVx);
-     rb.write(" ");
-     rb.print(imu.LTAVy);
-     rb.write(" ");
-     rb.print(imu.LTAVz);
-     rb.write(" ");
-     rb.print(imu.RTAVx);
-     rb.write(" ");
-     rb.print(imu.RTAVy);
-     rb.write(" ");
-     rb.print(imu.RTAVz);
-     rb.write(" ");
-     rb.print(imu.LSAVx);
-     rb.write(" ");
-     rb.print(imu.LSAVy);
-     rb.write(" ");
-     rb.print(imu.LSAVz);
-     rb.write(" ");
-     rb.print(imu.RSAVx);
-     rb.write(" ");
-     rb.print(imu.RSAVy);
-     rb.write(" ");
-     rb.print(imu.RSAVz);
-     rb.write(" ");
-     rb.print(cic.GP_IMU_L);
-     rb.write(" ");
-     rb.print(cic.GP_IMU_R);
-     rb.write(" ");
-     rb.print(Cur_command_L);
-     rb.write(" ");
-     rb.print(Cur_command_R);
-     rb.write(" ");
-     rb.print(m1.torque / torque_constant_before_gear / Gear_ratio);
-     rb.write(" ");
-     rb.print(m1.torque / torque_constant_before_gear / Gear_ratio);
-     rb.write(" ");
-     rb.print(m1.pos);
-     rb.write(" ");
-     rb.print(m2.pos);
-     rb.write(" ");
-     rb.print(m1.spe);
-     rb.write(" ");
-     rb.print(m2.spe);
-     rb.write(" ");
-     rb.print(triggerOn);
-     rb.write(" ");
-     rb.println(triggerVal);
-    //  rb.print("\n");
+  rb.print(relTime);
+  rb.write(" ");
+  rb.print(imu.TKx);
+  rb.write(" ");
+  rb.print(imu.TKy);
+  rb.write(" ");
+  rb.print(imu.TKz);
+  rb.write(" ");
+  rb.print(imu.LTx);
+  rb.write(" ");
+  rb.print(imu.LTy);
+  rb.write(" ");
+  rb.print(imu.LTz);
+  rb.write(" ");
+  rb.print(imu.RTx);
+  rb.write(" ");
+  rb.print(imu.RTy);
+  rb.write(" ");
+  rb.print(imu.RTz);
+  rb.write(" ");
+  rb.print(imu.LSx);
+  rb.write(" ");
+  rb.print(imu.LSy);
+  rb.write(" ");
+  rb.print(imu.LSz);
+  rb.write(" ");
+  rb.print(imu.RSx);
+  rb.write(" ");
+  rb.print(imu.RSy);
+  rb.write(" ");
+  rb.print(imu.RSz);
+  rb.write(" ");
+  rb.print(imu.TKAVx);
+  rb.write(" ");
+  rb.print(imu.TKAVy);
+  rb.write(" ");
+  rb.print(imu.TKAVz);
+  rb.write(" ");
+  rb.print(imu.LTAVx);
+  rb.write(" ");
+  rb.print(imu.LTAVy);
+  rb.write(" ");
+  rb.print(imu.LTAVz);
+  rb.write(" ");
+  rb.print(imu.RTAVx);
+  rb.write(" ");
+  rb.print(imu.RTAVy);
+  rb.write(" ");
+  rb.print(imu.RTAVz);
+  rb.write(" ");
+  rb.print(imu.LSAVx);
+  rb.write(" ");
+  rb.print(imu.LSAVy);
+  rb.write(" ");
+  rb.print(imu.LSAVz);
+  rb.write(" ");
+  rb.print(imu.RSAVx);
+  rb.write(" ");
+  rb.print(imu.RSAVy);
+  rb.write(" ");
+  rb.print(imu.RSAVz);
+  rb.write(" ");
+  rb.print(cic.GP_IMU_L);
+  rb.write(" ");
+  rb.print(cic.GP_IMU_R);
+  rb.write(" ");
+  rb.print(Cur_command_L);
+  rb.write(" ");
+  rb.print(Cur_command_R);
+  rb.write(" ");
+  rb.print(m1.torque / torque_constant_before_gear / Gear_ratio);
+  rb.write(" ");
+  rb.print(m1.torque / torque_constant_before_gear / Gear_ratio);
+  rb.write(" ");
+  rb.print(m1.pos);
+  rb.write(" ");
+  rb.print(m2.pos);
+  rb.write(" ");
+  rb.print(m1.spe);
+  rb.write(" ");
+  rb.print(m2.spe);
+  rb.write(" ");
+  rb.print(triggerOn);
+  rb.write(" ");
+  rb.println(triggerVal);
+  //  rb.print("\n");
   // Print adc into RingBuf.
   //  rb.println(adc);
   if (rb.getWriteError())
@@ -1198,7 +1251,7 @@ void logData3()
     Serial.println("WriteError");
     return; //break;
   }
-  
+
 }
 
 
@@ -1207,26 +1260,26 @@ void logData3()
 void plot_cic_data()
 {
   // double tempVal = analogRead(A8);
-  Serial.print(torque_command_L);
-  Serial.print(" ");
-  Serial.print(torque_command_R);
-  Serial.print(" ");
-  Serial.print(m1.torque);
-  Serial.print(" ");
-  Serial.println(m2.torque);
+  Serial.println(isEnabled);
+  // Serial.print(" ");
+  // Serial.print(m2.pos);
+  // Serial.print(" ");
+  // Serial.println(stopAssistanceInSwingAtNeturalKnee);
+//  Serial.print(" ");
+//  Serial.println(m2.torque);
   // Serial.println(imu.LTx);
-//    Serial.print(m1.pos/3.14*180);
-//    Serial.print(" ");
-//    Serial.print(m2.pos/3.14*180);
-//    Serial.print(" ");
-//    Serial.println(imu.LTx);
+  //    Serial.print(m1.pos/3.14*180);
+  //    Serial.print(" ");
+  //    Serial.print(m2.pos/3.14*180);
+  //    Serial.print(" ");
+  //    Serial.println(imu.LTx);
   // for (int i = 0; i < 3; i++)
   // {
   //   Serial.print(cic.sineAssistanceExtensionParameterList[0][i]);
   //   Serial.print(" ");
   // }
   // Serial.println(" ");
-  
+
   // Serial.print(Cur_command_L);
   // Serial.print(" ");
   // Serial.print(cic.T_command_L/0.232);
@@ -1246,7 +1299,7 @@ void initial_CAN2()
 
   // motor 1
   m1.initial_CAN();
-    delay(100);
+  delay(100);
   m1.exit_control_mode();
   delay(200);
   m1.exit_control_mode();
@@ -1261,7 +1314,7 @@ void initial_CAN2()
   delay(200);
   // motor 2
   m2.initial_CAN();
-    delay(100);
+  delay(100);
   m2.exit_control_mode();
   delay(200);
   m2.exit_control_mode();
@@ -1304,5 +1357,5 @@ void reset_motor_angle()
   delay(200);
   receive_CAN_data();
   delay(2);
-  
+
 }
