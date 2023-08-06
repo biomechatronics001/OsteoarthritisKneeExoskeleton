@@ -155,7 +155,7 @@ void loop()
     if (data_rs232_rx[0] == 165)
     {
       data_rs232_rx[1] = Serial.read();
-      if (data_rs232_rx[1] == 90)
+      if (data_rs232_rx[1] == 90 | data_rs232_rx[1] == 95) 
       {
         data_rs232_rx[2]=Serial.read();
         if (data_rs232_rx[2] == rs232_datalength)
