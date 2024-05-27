@@ -37,10 +37,13 @@ void IMU::Packet_Decode(uint8_t c)
     if (read_count >= 203)
     {
       st = 0;
-      DelayOutputTorqueCommand();
-      STSTorqueCommand();
-      Stair_Ascending();
-      SquatTorqueCommand();
+      GetData();
+      AssignLimbSegmentKinemtaics();
+      // DelayOutputTorqueCommand();
+      // STSTorqueCommand();
+      STSTorqueCommand3();
+      // Stair_Ascending();
+      // SquatTorqueCommand();
       read_count = 0;
     }
     break;
@@ -121,7 +124,7 @@ void IMU::GetData()
   }
 }
 
-void IMU::DelayOutputTorqueCommand()
+void IMU::AssignLimbSegmentKinemtaics()
 {
   GetData();
   TKx = IMUdata[4] - init_TKx; // Trunk angle
@@ -172,6 +175,63 @@ void IMU::DelayOutputTorqueCommand()
   RFAVx = IMUdata[43];
   RFAVy = IMUdata[44];
   RFAVz = IMUdata[45];
+
+  LKx = LSx - LTx;  // Left Knee
+  RKx = RSx - RTx;  // Right Knee
+}
+
+void IMU::DelayOutputTorqueCommand()
+{
+  // GetData();
+  // AssignLimbSegmentKinemtaics();
+  // TKx = IMUdata[4] - init_TKx; // Trunk angle
+  // TKy = IMUdata[5] - init_TKy;
+  // TKz = IMUdata[6] - init_TKz;
+  // TKAVx = IMUdata[1];
+  // TKAVy = IMUdata[2];
+  // TKAVz = IMUdata[3];
+
+  // LTx = IMUdata[11] - init_LTx; // Left Thigh
+  // LTy = IMUdata[12] - init_LTy;
+  // LTz = IMUdata[13] - init_LTz;
+  // LTAVx = IMUdata[8];
+  // LTAVy = IMUdata[9];
+  // LTAVz = IMUdata[10];
+
+  // RTx = IMUdata[18] - init_RTx; // Right Thigh
+  // RTy = IMUdata[19] - init_RTy;
+  // RTz = IMUdata[20] - init_RTz;
+  // RTAVx = IMUdata[15];
+  // RTAVy = IMUdata[16];
+  // RTAVz = IMUdata[17];
+
+  // LSx = IMUdata[25] - init_LSx; // Left Shank
+  // LSy = IMUdata[26] - init_LSy;
+  // LSz = IMUdata[27] - init_LSz;
+  // LSAVx = IMUdata[22];
+  // LSAVy = IMUdata[23];
+  // LSAVz = IMUdata[24];
+
+  // RSx = IMUdata[32] - init_RSx; // Right Shank
+  // RSy = IMUdata[33] - init_RSy;
+  // RSz = IMUdata[34] - init_RSz;
+  // RSAVx = IMUdata[29];
+  // RSAVy = IMUdata[30];
+  // RSAVz = IMUdata[31];
+
+  // LFx = IMUdata[39] - init_LFx; // Left Foot
+  // LFy = IMUdata[40] - init_LFy;
+  // LFz = IMUdata[41] - init_LFz;
+  // LFAVx = IMUdata[36];
+  // LFAVy = IMUdata[37];
+  // LFAVz = IMUdata[38];
+
+  // RFx = IMUdata[46] - init_RFx; // Right Foot
+  // RFy = IMUdata[47] - init_RFy;
+  // RFz = IMUdata[48] - init_RFz;
+  // RFAVx = IMUdata[43];
+  // RFAVy = IMUdata[44];
+  // RFAVz = IMUdata[45];
 
   // LTx_ble = imu.LTx * 100;
   // RTx_ble = imu.RTx * 100;
@@ -253,6 +313,193 @@ void IMU::SquatTorqueCommand()
 //   }
 // }
 
+void IMU::STSTorqueCommand3()
+{
+  // GetData();
+  // AssignLimbSegmentKinemtaics();
+  // Serial.println(LTx);
+
+  thigh_average_angle = (-LTx - RTx) / 2; // make it a positive value
+  for (int ii = 0; ii <= 19; ii++)
+  {
+    thighXHistory[ii] = thighXHistory[ii + 1];
+  }
+  thighXHistory[20] = LTx;
+  // slopeLTx = 0.0;
+
+  // State transitions
+  if ((STS_state == 0) & (thigh_average_angle < (STSStandThreshold + STSStandSlackAngle))) // just started the controller, default to standing position
+  {
+    STS_state = 1;
+  }
+
+  if ((STS_state == 4) & (thigh_average_angle < (STSStandThreshold + STSStandSlackAngle))) // from standing up to standing upright
+  {
+    STS_state = 1;
+  }
+
+  if ((STS_state == 1) & (thigh_average_angle >= (STSStandThreshold + STSStandSlackAngle)) & (thigh_average_angle < (STSSitThreshold - STSSitSlackAngle))) // from standing upright to sitting down
+  {
+    STS_state = 2;
+  }
+
+  if ((STS_state == 2) & (thigh_average_angle >= (STSSitThreshold - STSSitSlackAngle))) // from sitting down to sitting
+  {
+    STS_state = 3;
+  }
+
+  if ((STS_state == 3) & (thigh_average_angle >= (STSStandThreshold + STSStandSlackAngle)) & (thigh_average_angle < (STSSitThreshold - STSSitSlackAngle))) // from sitting to standing up
+  {
+    STS_state = 4;
+  }
+
+  // Apply control for each state
+  if (STS_state == 0) // initial state, no torque
+  {
+    STSTorque3 = 0.0;
+  }
+
+  if (STS_state == 1) // standing
+  {
+    STSTorque3 = 0.0;
+    STSStandPreviousMinAngle = (thigh_average_angle < STSStandPreviousMinAngle) ? thigh_average_angle : STSStandPreviousMinAngle;
+    STSStandMagnitudeUpdated = 0;
+  }
+
+  if (STS_state == 2) // sitting down
+  {
+    // STSTorque3 = 0.0;
+    // if ((STSStandMagnitudeUpdated == 0) & (STSStandPreviousMinAngle < STSStandThreshold))
+    if ((STSStandMagnitudeUpdated == 0))
+    {
+      STSStandThreshold = (int)round(0.4 * STSStandThreshold + 0.6 * STSStandPreviousMinAngle);
+      STSStandPreviousMinAngle = STSStandThreshold + STSStandSlackAngle;
+      STSStandMagnitudeUpdated = 1;
+    }
+    theta = (thigh_average_angle - STSStandThreshold) / (STSSitThreshold - STSStandThreshold);
+    thetaIndex = round(theta * 100);
+    thetaIndex = (thetaIndex > 100) ? 100 : thetaIndex;
+    thetaIndex = (thetaIndex < 0) ? 0 : thetaIndex;
+    STSTorque3 = -Sit2StandProfileList[thetaIndex] * STSSitDownMagnitude;
+  }
+
+  if (STS_state == 3) // sitting
+  {
+    STSTorque3 = 0.0;
+    STSSitPreviousMaxAngle = (thigh_average_angle > STSSitPreviousMaxAngle) ? thigh_average_angle : STSSitPreviousMaxAngle;
+    STSSitMagnitudeUpdated = 0;
+  }
+
+  if (STS_state == 4) // standing up
+  {
+    // STSTorque3 = 0.0;
+    // if ((STSSitMagnitudeUpdated == 0) & (STSSitThreshold < STSSitPreviousMaxAngle))
+    if ((STSSitMagnitudeUpdated == 0))
+    {
+      STSSitThreshold = (int)round(0.4 * STSSitThreshold + 0.6 * STSSitPreviousMaxAngle);
+      STSSitPreviousMaxAngle = STSSitThreshold - STSSitSlackAngle;
+      STSSitMagnitudeUpdated = 1;
+    }
+    theta = (thigh_average_angle - STSStandThreshold) / (STSSitThreshold - STSStandThreshold);
+    thetaIndex = round(theta * 100);
+    thetaIndex = (thetaIndex > 100) ? 100 : thetaIndex;
+    thetaIndex = (thetaIndex < 0) ? 0 : thetaIndex;
+    STSTorque3 = -Sit2StandProfileList[thetaIndex] * STSStandUpMagnitude;
+  }
+
+  Serial.print(thigh_average_angle);
+  Serial.print(" ");
+  Serial.print(STS_state);
+  // Serial.print(thigh_average_angle);
+  Serial.print(" ");
+  Serial.print(STSStandThreshold);
+  Serial.print(" ");
+  Serial.print(STSSitThreshold);
+  // Serial.print(" ");
+  // Serial.println(STSTorque3*10);
+  // Serial.print(STS_state);
+  Serial.print(" ");
+  Serial.println(STSTorque3);
+  
+  // if (thigh_average_angle < (STSStandThreshold + STSStandSlackAngle))
+  // {
+  //   STSTorque3 = 0.0;
+  //   if (STS_in_sit_region == 0)
+  //   {
+  //     STSSitThreshold = STSSitPreviousMaxAngle;
+  //     // STSSitPreviousMaxAngle = 30.0;
+  //   }
+  //   STS_in_stand_region = 1;
+  //   STSStandPreviousMinAngle = (thigh_average_angle < STSStandPreviousMinAngle) ? thigh_average_angle : STSStandPreviousMinAngle;
+  //   // if (thigh_average_angle < STSStandThreshold)
+  //   // {
+  //   //   STSStandPreviousMinAngle = (thigh_average_angle < STSStandPreviousMinAngle) ? thigh_average_angle : STSStandPreviousMinAngle;
+  //   // }
+  //   // slopeLTx = 0.0;
+  //   // Serial.println(0);
+  // }
+  // else if (thigh_average_angle > (STSSitThreshold - STSSitSlackAngle))
+  // {
+  //   STSTorque3 = 0.0;
+  //   STS_in_sit_region = 1;
+  //   STSSitPreviousMaxAngle = (thigh_average_angle > STSSitPreviousMaxAngle) ? thigh_average_angle : STSSitPreviousMaxAngle;
+  //   // if (thigh_average_angle > STSSitThreshold)
+  //   // {
+  //   //   STSSitPreviousMaxAngle = (thigh_average_angle > STSSitPreviousMaxAngle) ? thigh_average_angle : STSSitPreviousMaxAngle;
+  //   // }
+  // }
+  // else
+  // {
+  //   // if ((thigh_average_angle >= (STSStandThreshold + STSStandSlackAngle)) & (STS_in_stand_region == 1))
+  //   // {
+  //   //   STS_in_stand_region = 0;
+  //   //   STSStandThreshold = STSStandPreviousMinAngle;
+  //   //   STSStandPreviousMinAngle = 60.0;
+  //   // }
+  //   if ((thigh_average_angle <= (STSSitThreshold - STSSitSlackAngle)) & (STS_in_sit_region == 1))
+  //   {
+  //     STS_in_sit_region = 0;
+  //     // STSSitThreshold = STSSitPreviousMaxAngle;
+  //     // STSSitPreviousMaxAngle = 30.0;
+  //   }
+  //   if ((thigh_average_angle <= (STSStandThreshold + STSStandSlackAngle)) & (STS_in_sit_region == 0))
+  //   {
+  //     // STS_in_sit_region = 0;
+  //     // STSSitThreshold = STSSitPreviousMaxAngle;
+  //     // STSSitPreviousMaxAngle = 30.0;
+  //   }
+  //   numeratorLTx = 3 * (1 * thighXHistory[0] + 2 * thighXHistory[10] + 3 * thighXHistory[20]) - (1 + 2 + 3) * (thighXHistory[0] + thighXHistory[10] + thighXHistory[20]);
+  //   denominator = 3 * (1 + 4 + 9) - pow(1 + 2 + 3, 2);
+  //   slopeLTx = numeratorLTx / denominator;
+  //   theta = (knee_average_angle - STSStandThreshold) / (STSSitThreshold - STSStandThreshold);
+  //   thetaIndex = round(theta * 100);
+  //   if (slopeLTx >= thighXSlopeStandThreshold) // is standing
+  //   {
+  //     STSTorque3 = Sit2StandProfileList[thetaIndex] * STS_Gain_Stand;
+  //     // Serial.println(15);
+  //   }
+  //   else if (slopeLTx <= thighXSlopeSitThreshold) // is sitting
+  //   {
+  //     STSTorque3 = Sit2StandProfileList[thetaIndex] * STS_Gain_Sit;
+
+  //     // Serial.println(10);
+  //   }
+  //   else
+  //   {
+  //     // Serial.println(5);
+  //   }
+
+  // }
+  // Serial.print(thigh_average_angle);
+  // Serial.print(" ");
+  // // Serial.println(STSSitThreshold);
+  // Serial.print(STSSitPreviousMaxAngle);
+  // Serial.print(" ");
+  // Serial.print(STSSitThreshold);
+  // Serial.print(" ");
+  // Serial.println(STS_in_sit_region * 20);
+}
+
 void IMU::STSTorqueCommand()
 {
   knee_average_angle = (LKx + RKx) / 2;
@@ -297,7 +544,6 @@ void IMU::STSTorqueCommand()
     isSitting = 0;
     angleThreshold = knee_average_angle + 0;
   }
-  
 
   if (knee_average_angle <= 5)
   {
@@ -309,12 +555,12 @@ void IMU::STSTorqueCommand()
     if (knee_average_angle < 0)
     {
       STSTorque = 0; //(unit Amp);
-      STSTorque2 = 0; 
+      STSTorque2 = 0;
     }
     else if (knee_average_angle > angleThreshold)
     {
       STSTorque = 0; //(unit Amp);
-      STSTorque2 = 0; 
+      STSTorque2 = 0;
     }
     else
     {
@@ -386,5 +632,3 @@ void IMU::Stair_Ascending()
     DOTC_ascending[1] = 0.2 * Gain_F * y_delay_ascending_right[doi_ascending];
   }
 }
-
-

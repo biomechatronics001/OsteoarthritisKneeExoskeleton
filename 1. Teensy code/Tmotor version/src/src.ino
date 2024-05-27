@@ -9,7 +9,7 @@
 //#include <SD.h>
 
 // Settings
-int assist_mode = 12;
+int assist_mode = 4;
 int stopFlag = 0;
 int saveDataFlag = 1;
 int numOfInitialSteps = 1;
@@ -20,8 +20,8 @@ int CAN_ID = 3;         // CAN port from Teensy
 double Gear_ratio = 9;  //The actuator gear ratio, will enfluence actuator angle and angular velocity
 double torque_constant_before_gear = 0.105; // before gear at 24 V. Ref: https://store.tmotor.com/goods.php?id=982
 double torqueCorrectionFactor = 1.09; // actual torque is 1.09x the motor-returned torque through experiments (2023/07/14)
-int triggerPin = A0; //reading pin for sync with external mocap device
-int groundPin = A2; // for sync with external mocap device
+int triggerPin = A9; //reading pin for sync with external mocap device
+int groundPin = A8; // for sync with external mocap device
 
 // *** for RingBuf *** //
 #include "SdFat.h"
@@ -230,6 +230,8 @@ void loop()
 
   // imu.READ();
   CurrentControl();
+  // Serial.print(m1.pos);
+  // Serial.println(m2.pos);
 }
 
 int SDCardSetup()
@@ -321,7 +323,7 @@ int SaveAssistanceProfileParameters(const char* fileName)
   rb.begin(&file);
   Serial.print("Assistance profile parameters saving initialized. File name = ");
   Serial.println(fileName);
-  
+
   //
   // Max RingBuf used bytes. Useful to understand RingBuf overrun.
   size_t maxUsed = 0;
@@ -422,10 +424,10 @@ void CurrentControl()
       Compute_Tor_Commands(); // TODO
     }
 
-    if (assist_mode == 10)
-    {
-      // enforceInitialSteps();
-    }
+    // if (assist_mode == 10)
+    // {
+    //   // enforceInitialSteps();
+    // }
     // Serial.println(torque_command_L);
     m1.send_cmd(p_des, v_des, kp, kd, torque_command_L / torqueCorrectionFactor); //to correct for the torque
     // delay(1);
@@ -481,7 +483,7 @@ void CurrentControl()
     send_ble_Data(); // send the BLE data
     previous_time_ble = current_time;
 
-    plot_cic_data();
+    // plot_cic_data();
 
   }
   if (Serial.available())
@@ -495,14 +497,14 @@ void CurrentControl()
       {
         SDCardSaveToFile();
         messageID = 2;
-        int messageValueArray[] = {1,logYear,logMonth,logDay,logHour,logMinute,logSecond};
-        sendMessage(messageID, messageValueArray,7);
+        int messageValueArray[] = {1, logYear, logMonth, logDay, logHour, logMinute, logSecond};
+        sendMessage(messageID, messageValueArray, 7);
         String yearStr = String(logYear);
-        String monthStr = (logMonth<10) ? "0" + String(logMonth) : String(logMonth);
-        String dayStr = (logDay<10) ? "0" + String(logDay) : String(logDay);
-        String hourStr = (logHour<10) ? "0" + String(logHour) : String(logHour);
-        String minuteStr = (logMinute<10) ? "0" + String(logMinute) : String(logMinute);
-        String secondStr = (logSecond<10) ? "0" + String(logSecond) : String(logSecond);
+        String monthStr = (logMonth < 10) ? "0" + String(logMonth) : String(logMonth);
+        String dayStr = (logDay < 10) ? "0" + String(logDay) : String(logDay);
+        String hourStr = (logHour < 10) ? "0" + String(logHour) : String(logHour);
+        String minuteStr = (logMinute < 10) ? "0" + String(logMinute) : String(logMinute);
+        String secondStr = (logSecond < 10) ? "0" + String(logSecond) : String(logSecond);
         String timeStr = yearStr + "-" + monthStr + "-" + dayStr + "-" + hourStr + "-" + minuteStr + "-" + secondStr;
 
         String stringOne = taskName + '-';
@@ -529,12 +531,13 @@ void Compute_Tor_Commands()
     v_des = 0; //dont change this
     kp = 0; //dont change this
     kd = 0; //dont change this
-    torque_command_L = 2 * sin(2 * PI * current_time / 1000000);
-    torque_command_R = -2 * sin(2 * PI * current_time / 1000000);
+    torque_command_L = 0.5 * sin(2 * PI * current_time / 1000000);
+    torque_command_R = -0.5 * sin(2 * PI * current_time / 1000000);
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
+    Serial.println("sine");
   }
-    else if (assist_mode == 6) //sine wave
+  else if (assist_mode == 6) //sine wave
   {
     mode = "Constant";
     p_des = 0; //dont change this
@@ -559,6 +562,14 @@ void Compute_Tor_Commands()
     mode = "Sit-to-Stand2 (IMU)";
     torque_command_L = +imu.STSTorque2;
     torque_command_R = -imu.STSTorque2;
+    Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
+    Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
+  }
+  else if (assist_mode == 10)
+  {
+    mode = "Sit-to-Stand3 (IMU)";
+    torque_command_L = +imu.STSTorque3;
+    torque_command_R = -imu.STSTorque3;
     Cur_command_L = torque_command_L / torque_constant_before_gear / Gear_ratio;
     Cur_command_R = torque_command_R / torque_constant_before_gear / Gear_ratio;
   }
@@ -1064,13 +1075,13 @@ void receive_ble_Data()
               logMinute = minute();
               logSecond = second();
               String yearStr = String(logYear);
-              String monthStr = (logMonth<10) ? "0" + String(logMonth) : String(logMonth);
-              String dayStr = (logDay<10) ? "0" + String(logDay) : String(logDay);
-              String hourStr = (logHour<10) ? "0" + String(logHour) : String(logHour);
-              String minuteStr = (logMinute<10) ? "0" + String(logMinute) : String(logMinute);
-              String secondStr = (logSecond<10) ? "0" + String(logSecond) : String(logSecond);
+              String monthStr = (logMonth < 10) ? "0" + String(logMonth) : String(logMonth);
+              String dayStr = (logDay < 10) ? "0" + String(logDay) : String(logDay);
+              String hourStr = (logHour < 10) ? "0" + String(logHour) : String(logHour);
+              String minuteStr = (logMinute < 10) ? "0" + String(logMinute) : String(logMinute);
+              String secondStr = (logSecond < 10) ? "0" + String(logSecond) : String(logSecond);
               String timeStr = yearStr + "-" + monthStr + "-" + dayStr + "-" + hourStr + "-" + minuteStr + "-" + secondStr;
-              
+
               String stringTwo = stringOne + conditionName + "-Trial";
               logFileName = timeStr + "-" + stringTwo + String(trialIdx) + ".csv";
               paramFileName = timeStr + "-" + stringTwo + String(trialIdx) + "-Parameters.txt";
@@ -1080,7 +1091,7 @@ void receive_ble_Data()
               {
                 messageID = 1;
                 int messageValueArray[] = {1};
-                sendMessage(messageID, messageValueArray,1);
+                sendMessage(messageID, messageValueArray, 1);
                 relTime = 0.0;
                 Serial.println("Data logging started......");
               }
@@ -1088,21 +1099,21 @@ void receive_ble_Data()
               {
                 messageID = 1;
                 int messageValueArray[] = {0};
-                sendMessage(messageID, messageValueArray,1);
+                sendMessage(messageID, messageValueArray, 1);
                 isLogging = 0; // prevent logging because there is no SD
                 Serial.println("Data logging aborted because there is no SD");
               }
-              
+
             }
             else if (isLogging == 0)
             {
               SDCardSaveToFile();
               messageID = 2;
-              int messageValueArray[] = {1,logYear-2000,logMonth,logDay,logHour,logMinute,logSecond};
-              sendMessage(messageID, messageValueArray,7);
+              int messageValueArray[] = {1, logYear - 2000, logMonth, logDay, logHour, logMinute, logSecond};
+              sendMessage(messageID, messageValueArray, 7);
               Serial.println("Data logging stopped......");
               SaveAssistanceProfileParameters(paramFileName.c_str());
-           }
+            }
           }
           else if (data_rs232_rx[3] == 25)
           {
@@ -1204,6 +1215,67 @@ void receive_ble_Data()
             stopAssistanceInSwingAtNeturalKnee = int(data_rs232_rx[4]); //set to be always on
             Serial.println(stopAssistanceInSwingAtNeturalKnee);
           }
+          else if (data_rs232_rx[3] == 30)
+          {
+            double STSStandUpMagnitude = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSStandUpMagnitude = STSStandUpMagnitude;
+            Serial.print("STS magnitude (stand up) = ");
+            Serial.print(STSStandUpMagnitude);
+            Serial.println(" Nm");
+          }
+          else if (data_rs232_rx[3] == 31)
+          {
+            double STSSitDownMagnitude = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSSitDownMagnitude = STSSitDownMagnitude;
+            Serial.print("STS magnitude (sit down) = ");
+            Serial.print(STSSitDownMagnitude);
+            Serial.println(" Nm");
+          }
+          else if (data_rs232_rx[3] == 32)
+          {
+            double STSStandSlackAngle = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSStandSlackAngle = STSStandSlackAngle;
+            Serial.print("STS slack angle (stand) = ");
+            Serial.print(STSStandSlackAngle);
+            Serial.println(" deg");
+          }
+          else if (data_rs232_rx[3] == 33)
+          {
+            double STSSitSlackAngle = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSSitSlackAngle = STSSitSlackAngle;
+            Serial.print("STS slack angle (sit) = ");
+            Serial.print(STSSitSlackAngle);
+            Serial.println(" deg");
+          }
+          else if (data_rs232_rx[3] == 34)
+          {
+            double STSStandThreshold = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSStandThreshold = STSStandThreshold;
+            Serial.print("STS threshold (stand) = ");
+            Serial.print(STSStandThreshold);
+            Serial.println(" deg");
+          }
+          else if (data_rs232_rx[3] == 35)
+          {
+            double STSSitThreshold = ((int16_t)(((uint16_t)data_rs232_rx[4]) | ((uint16_t)data_rs232_rx[5] << 8))) / 100.0;
+            imu.STSSitThreshold = STSSitThreshold;
+            Serial.print("STS slack angle (sit) = ");
+            Serial.print(STSSitThreshold);
+            Serial.println(" deg");
+          }
+          else if (data_rs232_rx[3] == 36)
+          {
+            imu.STSStandUpMagnitude = 0.0;
+            imu.STSSitDownMagnitude = 0.0;
+            imu.STSStandSlackAngle = 7.5;
+            imu.STSSitSlackAngle = 7.5;
+            imu.STSStandThreshold = 5.0;
+            imu.STSSitThreshold = 75.0;
+            imu.STS_state = 0;
+            imu.STSSitPreviousMaxAngle = 75;
+            imu.STSStandPreviousMinAngle = 5;
+            Serial.println("STS Reset button pressed. All parameters reset to default values.");
+          }
         }
       }
     }
@@ -1285,6 +1357,9 @@ void send_ble_Data()
   data_ble[26] = motor_speed_L_ble >> 8;
   data_ble[27] = motor_speed_R_ble;
   data_ble[28] = motor_speed_R_ble >> 8;
+  data_ble[29] = imu.STS_state;
+  data_ble[30] = imu.STSStandThreshold + 20;
+  data_ble[31] = imu.STSSitThreshold - 20;
   //
 
   Serial5.write(data_ble, datalength_ble);
@@ -1377,7 +1452,7 @@ void logData3()
   rb.print(imu.TKz); // trunk angle transverse [deg]
   rb.write(" ");
   rb.print(imu.LTx); // left thigh angle sagittal [deg]
-  rb.write(" "); 
+  rb.write(" ");
   rb.print(imu.LTy); // left thigh angle frontal [deg]
   rb.write(" ");
   rb.print(imu.LTz); // left thigh angle transverse [deg]
@@ -1439,7 +1514,7 @@ void logData3()
   rb.print(Cur_command_R); // commanded current to the right motor [A]
   rb.write(" ");
   rb.print(m1.torque * torqueCorrectionFactor / torque_constant_before_gear / Gear_ratio); // estimated current to the left motor [A]
-  rb.write(" "); 
+  rb.write(" ");
   rb.print(m2.torque * torqueCorrectionFactor / torque_constant_before_gear / Gear_ratio); // estimated current to the right motor [A]
   rb.write(" ");
   rb.print(m1.pos); // motor-returned encoder position of the left motor [rad]
@@ -1476,8 +1551,8 @@ void plot_cic_data()
   // Serial.print(m2.pos);
   // Serial.print(" ");
   // Serial.println(stopAssistanceInSwingAtNeturalKnee);
-//  Serial.print(" ");
-//  Serial.println(m2.torque);
+  //  Serial.print(" ");
+  //  Serial.println(m2.torque);
   // Serial.println(imu.LTx);
   //    Serial.print(m1.pos/3.14*180);
   //    Serial.print(" ");

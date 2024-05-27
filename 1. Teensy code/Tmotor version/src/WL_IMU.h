@@ -150,6 +150,7 @@ public:
   CAL_TYPE SquatTorque;
   CAL_TYPE STSTorque; // sit-to-stand
   CAL_TYPE STSTorque2; // sit-to-stand2 Nm
+  CAL_TYPE STSTorque3; // sit-to-stand2 Nm
   CAL_TYPE y_delay[100]={0};
   CAL_TYPE RLKx_delay[100]={0};
   CAL_TYPE y_raw=0;
@@ -178,6 +179,7 @@ public:
   double knee_average_angle; // for IMU-based sit-to-stand
   // for sit-to-stand v2
   double hipXHistory[11] = {0.0};
+  double thighXHistory[21] = {0.0}; // XX second long buffer
   double kneeXHistory[11] = {0.0};
   int isTriggered = 0;
   int isSitting = 0;
@@ -185,14 +187,42 @@ public:
   double thigh_average_angle;
   double knee_average_speed;
   double STSSlopeThreshold = 0.15;
+  // for STSTorqueCommand3()
+  int STSStandThreshold = 5; //deg
+  double STSStandPreviousMinAngle = 5.0; // deg, used to update threshold angle if necessary
+  int STSSitThreshold = 75; // deg
+  double STSSitPreviousMaxAngle = 75.0; // deg, used to update threshold angle if necessary
+  double STSStandSlackAngle = 7.5; // deg
+  double STSSitSlackAngle = 7.5; // deg
+  double STS_Gain_Stand = 1.0;
+  double STS_Gain_Sit = 1.0;
+  double thighXSlopeStandThreshold = 0.03; // rad/s, above this threshold is considered standing up
+  double thighXSlopeSitThreshold = -0.03; // rad/s, below this threshold is considered sitting down
+  double isFirstSTS = 1;
+  double slopeLTx = 0.0;
+  double numeratorLTx = 0.0;
+  double denominator = 0.0;
+  int STS_in_stand_region = 2;
+  int STS_in_sit_region = 2;
+  int STS_is_sitting_down = 0;
+  int STS_is_standing_up = 0;
+  int STS_state = 0; // 0 = just started; 1 = stand; 2 = sitting down; 3 = sit; 4 = standing up;
+  double temp = 0.0;
+  double temp2 = 0.0;
+  double STSStandUpMagnitude = 0.0;
+  double STSSitDownMagnitude = 0.0;
+  int STSStandMagnitudeUpdated = 0;
+  int STSSitMagnitudeUpdated = 0;
+
   double Sit2StandProfileList[101] = {0,0.01982,0.03956,0.05922,0.07881,0.0983,0.1177,0.137,0.1562,0.1753,0.1943,0.2132,0.232,0.2506,0.2691,0.2875,0.3058,0.3239,0.3419,0.3597,0.3774,0.3949,0.4123,0.4295,0.4465,0.4633,0.48,0.4965,0.5128,0.529,0.5449,0.5606,0.5762,0.5915,0.6066,0.6215,0.6362,0.6506,0.6649,0.6789,0.6926,0.7061,0.7194,0.7325,0.7452,0.7577,0.77,0.782,0.7937,0.8051,0.8163,0.8272,0.8378,0.8481,0.8581,0.8678,0.8772,0.8863,0.895,0.9035,0.9116,0.9194,0.9269,0.9341,0.9409,0.9473,0.9535,0.9592,0.9646,0.9697,0.9744,0.9787,0.9826,0.9862,0.9894,0.9922,0.9946,0.9966,0.9982,0.9994,1,1.001,0.9997,0.9971,0.9919,0.9836,0.9713,0.9545,0.9324,0.9043,0.8694,0.8273,0.777,0.7179,0.6494,0.5706,0.4811,0.3799,0.2665,0.1401,0};
   int thetaIndex = 0;
   
 
   
-
+  void AssignLimbSegmentKinemtaics();
   void DelayOutputTorqueCommand();
   void STSTorqueCommand();
+  void STSTorqueCommand3();
   void SquatTorqueCommand();
   
   
